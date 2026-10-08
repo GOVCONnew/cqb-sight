@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CQB SIGHT · detector test harness</title>
+<link rel="stylesheet" href="../css/app.css">
+<link rel="icon" href="../icons/icon-192.png">
+<style>
+  html, body { overflow: auto; height: auto; -webkit-user-select: text; user-select: text; }
+  body { padding: 16px; background: #000; }
+  h1 { font-size: 16px; letter-spacing: .3em; margin: 0 0 4px; } h1 small { color: #fff; letter-spacing: .3em; font-size: 11px; margin-left: 8px; }
+  .panels { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin-top: 12px; }
+  .panel { border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+  .panel h3 { margin: 0 0 6px; font-size: 10px; letter-spacing: .2em; color: var(--muted); }
+  .phone { position: relative; overflow: hidden; border-radius: 26px; border: 3px solid #222; background: #000; }
+  .phone img, .phone canvas.src { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .phone canvas.ov { position: absolute; inset: 0; width: 100%; height: 100%; }
+  pre { font-size: 11px; color: #e9f5d6; background: #0a0f06; border: 1px solid var(--line); border-radius: 8px; padding: 8px; max-width: 1240px; white-space: pre-wrap; margin-top: 12px; }
+  .pass { color: var(--acid); font-weight: 900; } .fail { color: var(--danger); font-weight: 900; }
+</style>
+</head>
+<body>
+<h1>NEWTON · CQB SIGHT <small>DETECTOR TEST HARNESS</small></h1>
+<div id="verdict" class="muted">running…</div>
+<div class="panels">
+  <div class="panel"><h3>A · PERSON + DOG (PD PHOTO) · FAST MODEL</h3><canvas id="full" style="width:400px;height:562px"></canvas></div>
+  <div class="panel"><h3>B · OUTDOOR MULTI-TARGET · CONTAIN</h3><canvas id="full2" style="width:560px;height:420px"></canvas></div>
+  <div class="panel"><h3>C · PHONE PORTRAIT · OBJECT-FIT COVER</h3>
+    <div class="phone" id="phoneB" style="width:260px;height:562px"><img id="imgB" src="fountain_people_dog.jpg"><canvas class="ov" id="ovB"></canvas></div></div>
+  <div class="panel"><h3>D · AIMED (CANVAS SRC) · RETICLE</h3>
+    <div class="phone" id="phoneC" style="width:260px;height:562px"><canvas class="src" id="srcC"></canvas><canvas class="ov" id="ovC"></canvas></div></div>
+</div>
+<pre id="log"></pre>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script src="../js/detector.js"></script>
+<script>
+(async function () {
+  var THR = 0.5; // app default
+  var out = { ok: false, errors: [], threshold: THR }, logEl = document.getElementById('log');
+  function log(s) { logEl.textContent += s + '\n'; console.log(s); }
+  function fmtD(ds) { return ds.map(function (d) { return d.cls + ' ' + d.score.toFixed(2); }).join(', ') || '(none)'; }
+  async function loadImg(src) { var i = new Image(); i.src = src; await i.decode(); return i; }
+  var OPTS = { longSide: 300, minScore: THR, petMinScore: CQB.petThreshold(THR) };
+  window.__harness = out;
+  try {
+    var img = await loadImg('person_dog.jpg'), W = img.naturalWidth, H = img.naturalHeight;
+    var img2 = await loadImg('fountain_people_dog.jpg'), W2 = img2.naturalWidth, H2 = img2.naturalHeight;
+    log('primary ' + W + 'x' + H + ' | outdoor ' + W2 + 'x' + H2 + ' | threshold ' + THR + ' (pets ' + OPTS.petMinScore + ')');
+
+    out.models = {};
+    for (var base of ['lite_mobilenet_v2', 'mobilenet_v2']) {
+      var t0 = performance.now();
+      await CQB.loadModel(base, function (s) { log('[status] ' + s); });
+      var loadMs = performance.now() - t0, times = [], dets;
+      for (var i = 0; i < 5; i++) { var t1 = performance.now(); dets = await CQB.detect(img, W, H, OPTS); times.push(performance.now() - t1); }
+      var d2 = await CQB.detect(img2, W2, H2, OPTS);
+      out.models[base] = { loadMs: Math.round(loadMs), inferMs: times.map(Math.round), primary: fmtD(dets), outdoor: fmtD(d2) };
+      log(base + ': load ' + Math.round(loadMs) + 'ms, infer ' + times.map(Math.round).join('/') + 'ms | primary → ' + fmtD(dets) + ' | outdoor → ' + fmtD(d2));
+    }
+    out.backend = tf.getBackend();
+
+    await CQB.loadModel('lite_mobilenet_v2');
+    await CQB.detect(img, W, H, OPTS);
+    var before = tf.memory().numTensors;
+    for (var j = 0; j < 20; j++) await CQB.detect(j % 2 ? img : img2, j % 2 ? W : W2, j % 2 ? H : H2, OPTS);
+    var after = tf.memory().numTensors;
+    out.leak = { before: before, after: after, leaked: after - before };
+    log('tensor leak test (20 frames): before=' + before + ' after=' + after);
+
+    var dets = await CQB.detect(img, W, H, OPTS), dets2 = await CQB.detect(img2, W2, H2, OPTS);
+    out.primary = fmtD(dets); out.outdoor = fmtD(dets2);
+
+    function drawContain(id, im, w, h, ds) {
+      var cv = document.getElementById(id), dpr = window.devicePixelRatio || 1, vw = cv.clientWidth, vh = cv.clientHeight;
+      cv.width = vw * dpr; cv.height = vh * dpr; var c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var T = CQB.containTransform(w, h, vw, vh); c.drawImage(im, T.ox, T.oy, w * T.s, h * T.s);
+      var tr = new CQB.Tracker({ minHits: 1 }); tr.update(ds, 0);
+      tr.visible().forEach(function (t) { CQB.drawBox(c, CQB.toView(t.box, T), t, false, 1); });
+    }
+    drawContain('full', img, W, H, dets);
+    drawContain('full2', img2, W2, H2, dets2);
+
+    function drawPhone(ovId, phoneId, srcW, srcH, ds) {
+      var ph = document.getElementById(phoneId), dpr = window.devicePixelRatio || 1;
+      var vw = ph.clientWidth, vh = ph.clientHeight, ov = document.getElementById(ovId), c = ov.getContext('2d');
+      ov.width = vw * dpr; ov.height = vh * dpr; c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var T = CQB.coverTransform(srcW, srcH, vw, vh), tr = new CQB.Tracker({ minHits: 1 }); tr.update(ds, 0);
+      var hit = null;
+      tr.visible().forEach(function (t) { var vb = CQB.toView(t.box, T); if (t.kind === 'person' && CQB.contains(vb, vw / 2, vh / 2)) hit = t; });
+      tr.visible().forEach(function (t) { CQB.drawBox(c, CQB.toView(t.box, T), t, t === hit, 0.8); });
+      CQB.drawReticle(c, vw / 2, vh / 2, !!hit, 0.8);
+      return { transform: T, onTarget: hit ? hit.cls + ' #' + hit.id : null };
+    }
+    out.panelC = drawPhone('ovB', 'phoneB', W2, H2, dets2);
+
+    // Panel D: virtual camera frame aimed at the most confident person in the outdoor photo (canvas source, like a video frame)
+    var person = dets2.filter(function (d) { return d.kind === 'person'; }).sort(function (a, b) { return b.score - a.score; })[0];
+    var cw = 600, chh = 800, cxp = person.x + person.w / 2, cyp = person.y + person.h * 0.4;
+    var sx = Math.max(0, Math.min(W2 - cw, cxp - cw / 2)), sy = Math.max(0, Math.min(H2 - chh, cyp - chh / 2));
+    var srcC = document.getElementById('srcC'); srcC.width = cw; srcC.height = chh;
+    srcC.getContext('2d').drawImage(img2, sx, sy, cw, chh, 0, 0, cw, chh);
+    var detsC = await CQB.detect(srcC, cw, chh, OPTS);
+    out.panelD = drawPhone('ovC', 'phoneC', cw, chh, detsC); out.panelD.dets = fmtD(detsC);
+
+    var tr = new CQB.Tracker({ minHits: 2 }), newCount = 0;
+    for (var f = 0; f < 30; f++) {
+      var jit = dets2.map(function (d) { return Object.assign({}, d, { x: d.x + (f % 3) * 4, y: d.y - (f % 2) * 3 }); });
+      newCount += tr.update(jit, f * 80).filter(function (t) { return t.kind === 'person'; }).length;
+    }
+    var expectedPeople = dets2.filter(function (d) { return d.kind === 'person'; }).length;
+    out.tracker = { uniquePeopleCounted: newCount, expected: expectedPeople, ok: newCount === expectedPeople };
+    log('tracker: 30 jittered frames → ' + newCount + ' unique people (expected ' + expectedPeople + ')');
+
+    var nP = dets.filter(function (d) { return d.kind === 'person'; }).length, nD = dets.filter(function (d) { return d.cls === 'dog'; }).length;
+    var nP2 = dets2.filter(function (d) { return d.kind === 'person'; }).length;
+    out.counts = { primaryPerson: nP, primaryDog: nD, outdoorPerson: nP2 };
+    out.ok = nP >= 1 && nD >= 1 && nP2 >= 1 && out.leak.leaked === 0 && out.tracker.ok && !!out.panelD.onTarget;
+    log('panel C on-target: ' + out.panelC.onTarget + ' | panel D on-target: ' + out.panelD.onTarget + ' (' + out.panelD.dets + ')');
+    document.getElementById('verdict').innerHTML = (out.ok ? '<span class="pass">PASS</span>' : '<span class="fail">FAIL</span>') +
+      ' · threshold ' + THR + ' (pets ' + OPTS.petMinScore + ') · backend ' + out.backend + ' · A: ' + out.primary + ' · B: ' + out.outdoor +
+      ' · tensor leak ' + out.leak.leaked + ' · tracker ' + (out.tracker.ok ? 'OK' : 'BAD') + ' · reticle ' + (out.panelD.onTarget ? 'ON TARGET' : 'miss');
+  } catch (e) {
+    out.errors.push(String(e && e.stack || e)); log('ERROR ' + (e && e.stack || e));
+    document.getElementById('verdict').innerHTML = '<span class="fail">ERROR</span> ' + e;
+  }
+  out.done = true;
+})();
+</script>
+</body>
+</html>

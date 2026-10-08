@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="CQB Sight">
+  <meta name="theme-color" content="#000000">
+  <meta name="format-detection" content="telephone=no">
+  <title>NEWTON · CQB SIGHT</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="stage">
+    <video id="cam" playsinline muted autoplay webkit-playsinline></video>
+    <canvas id="overlay"></canvas>
+  </div>
+
+  <!-- HUD -->
+  <header id="hud-top" class="hud">
+    <div class="brand"><span class="logo">NEWTON</span><span class="sub">CQB SIGHT</span></div>
+    <div class="stats">
+      <div class="stat"><span class="k">FPS</span><span class="v" id="fps">--</span></div>
+      <div class="stat"><span class="k">PPL</span><span class="v" id="cnt-person">0</span></div>
+      <div class="stat pet"><span class="k">PET</span><span class="v" id="cnt-pet">0</span></div>
+    </div>
+  </header>
+  <div id="status" class="hud pill">MODEL: IDLE</div>
+  <div id="ontarget" class="hidden">◉ ON TARGET</div>
+  <ol id="eventlog" class="hud"></ol>
+
+  <footer id="hud-bottom" class="hud">
+    <button id="btn-history" class="icon-btn" aria-label="Run history">LOG</button>
+    <div class="run-wrap">
+      <div id="timer">00:00.00</div>
+      <button id="btn-run" class="run-btn" disabled>START CLEAR</button>
+    </div>
+    <button id="btn-settings" class="icon-btn" aria-label="Settings">SET</button>
+  </footer>
+
+  <!-- Splash / start -->
+  <section id="splash">
+    <div class="splash-inner">
+      <svg class="splash-icon" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="30" fill="none" stroke="#9ACD32" stroke-width="3"/>
+        <path d="M8 50H42M58 50H92M50 8V42M50 58V92" stroke="#9ACD32" stroke-width="3"/>
+        <circle cx="50" cy="50" r="3" fill="#9ACD32"/>
+      </svg>
+      <div class="logo big">NEWTON</div>
+      <div class="sub big">CQB SIGHT</div>
+      <p class="muted">On-device person &amp; pet detection for airsoft CQB drills. Video never leaves the phone.</p>
+      <button id="btn-start" class="primary">START</button>
+      <p id="splash-status" class="muted small">Loading model…</p>
+      <p class="muted tiny">Tap START, then allow camera access. For true fullscreen: Share → Add to Home Screen.<br>Airsoft/training use only. Wear eye protection.</p>
+    </div>
+  </section>
+
+  <!-- Settings -->
+  <section id="sheet-settings" class="sheet hidden" aria-label="Settings">
+    <div class="sheet-card">
+      <h2>SETTINGS</h2>
+      <label class="row col">
+        <span>Confidence threshold <b id="thr-val">0.50</b></span>
+        <small class="muted tiny">Pets use threshold − 0.15 (min 0.25): animal scores run lower than person scores.</small>
+        <input id="set-thr" type="range" min="0.2" max="0.9" step="0.05" value="0.5">
+      </label>
+      <label class="row"><span>Detect pets / animals</span><input id="set-pets" type="checkbox" class="toggle" checked></label>
+      <label class="row"><span>Sound cue on new person</span><input id="set-sound" type="checkbox" class="toggle" checked></label>
+      <label class="row col"><span>Model</span>
+        <select id="set-model">
+          <option value="lite_mobilenet_v2">FAST · SSDLite MobileNet v2</option>
+          <option value="mobilenet_v2">ACCURATE · SSD MobileNet v2</option>
+        </select>
+      </label>
+      <label class="row col"><span>Detection frame size (model runs at 300×300)</span>
+        <select id="set-res">
+          <option value="300">300 px · model-native, fastest</option>
+          <option value="416">416 px · smoother downsample</option>
+        </select>
+      </label>
+      <label class="row"><span>Debug overlay (tensors / backend)</span><input id="set-debug" type="checkbox" class="toggle"></label>
+      <div class="btns">
+        <button id="btn-test-beep" class="ghost">TEST BEEP</button>
+        <button class="primary" data-close>DONE</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Summary -->
+  <section id="sheet-summary" class="sheet hidden" aria-label="Run summary">
+    <div class="sheet-card">
+      <h2>CLEAR COMPLETE</h2>
+      <div class="kpis">
+        <div><span class="k">TOTAL</span><span class="v" id="sum-total">--</span></div>
+        <div><span class="k">PEOPLE</span><span class="v" id="sum-people">0</span></div>
+        <div><span class="k">PETS</span><span class="v pet" id="sum-pets">0</span></div>
+        <div><span class="k">AVG → RETICLE</span><span class="v" id="sum-avg">--</span></div>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>TARGET</th><th>DETECTED</th><th>→ RETICLE</th></tr></thead>
+        <tbody id="sum-rows"></tbody>
+      </table>
+      <div class="btns">
+        <button class="ghost" id="btn-sum-history">HISTORY</button>
+        <button class="primary" data-close>CLOSE</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- History -->
+  <section id="sheet-history" class="sheet hidden" aria-label="Run history">
+    <div class="sheet-card">
+      <h2>RUN HISTORY</h2>
+      <div id="hist-list" class="hist"></div>
+      <div class="btns wrap">
+        <button class="ghost" id="btn-export-csv">EXPORT CSV</button>
+        <button class="ghost" id="btn-export-json">EXPORT JSON</button>
+        <button class="danger" id="btn-clear-hist">CLEAR</button>
+        <button class="primary" data-close>CLOSE</button>
+      </div>
+    </div>
+  </section>
+
+  <video id="nosleep" src="media/nosleep.mp4" playsinline muted loop webkit-playsinline style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none"></video>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js" crossorigin="anonymous"></script>
+  <script src="js/detector.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
